@@ -1,0 +1,41 @@
+# backend/config/default.yaml (例)
+# 環境変数で上書き可能
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  # log_level: "info" # "debug", "info", "warning", "error", "critical"
+
+llm:
+  provider: "openai" # "openai", "anthropic", "google_vertexai", etc.
+  api_key: "${LLM_API_KEY}" # 環境変数から読み込む
+  model_name: "gpt-3.5-turbo"
+  # temperature: 0.7
+  # max_tokens: 1000
+  # memory:
+  #   type: "ConversationBufferWindowMemory"
+  #   k: 5
+
+tts:
+  # model_dir: "/path/to/style_bert_vits2_models"
+  # default_speaker_id: 0
+  # default_language: "JP"
+  # cache_enabled: true
+  # cache_dir: "/tmp/tts_cache"
+  # api_url: "http://localhost:5000/voice"
+
+vrm_models:
+  default_model_id: "default_avatar"
+  available:
+    - id: "default_avatar"
+      name: "デフォルトアバター"
+      vrm_url: "/models/default_avatar.vrm"
+      thumbnail_url: "/models/default_avatar_thumb.png"
+
+cors:
+  allow_origins:
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
+  allow_credentials: true
+  allow_methods: ["*"]
+  allow_headers: ["*"]
