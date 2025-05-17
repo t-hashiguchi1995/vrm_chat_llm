@@ -12,8 +12,8 @@ from ..schemas.websocket import (
 class WebSocketManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
-        self.llm_service = LLMService()
-
+        # Defer instantiation per client to avoid shared state.
+        self.services: Dict[str, LLMService] = {}
     async def connect(self, websocket: WebSocket, client_id: str):
         await websocket.accept()
         self.active_connections[client_id] = websocket
