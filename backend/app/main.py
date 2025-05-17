@@ -30,9 +30,9 @@ async def websocket_route(websocket: WebSocket, client_id: str = None):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "main:app",
+        "backend.app.main:app",
         host=settings.HOST,
         port=settings.PORT,
         log_level=settings.LOG_LEVEL,
         reload=True
-    ) 
+    )
