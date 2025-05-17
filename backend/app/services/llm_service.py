@@ -21,21 +21,15 @@ class LLMService:
         )
 
     async def generate_response(
-        self, user_message: str, conversation_id: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
-        """
-        ユーザーメッセージに対する応答を生成し、ストリーミング形式で返します。
-        """
-        messages = [
-            self.system_message,
-            HumanMessage(content=user_message)
-        ]
-
         try:
             async for chunk in self.llm.astream(messages):
-                if chunk.content:
-                    yield chunk.content
+                # extract the delta containing the assistant’s new tokens
+                choice = chunk.choices[0]
+                delta = choice.delta
+                if hasattr(delta, "content") and delta.content:
+                    yield delta.content
         except Exception as e:
+            …
             yield f"エラーが発生しました: {str(e)}"
 
     def get_conversation_history(self, conversation_id: Optional[str] = None) -> list:
