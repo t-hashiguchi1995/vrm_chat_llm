@@ -21,15 +21,27 @@ class LLMService:
         )
 
     async def generate_response(
+        self,
+        user_message: str,
+        conversation_id: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream the assistant response token-by-token.
+        """
+        # 1️⃣ Build the prompt -------------------------------------------------
+        messages = [self.system_message, *self.memory.chat_memory.messages]
+        human_msg = HumanMessage(content=user_message)
+        messages.append(human_msg)
+        self.memory.chat_memory.messages.append(human_msg)
+
+        # 2️⃣ Stream from the LLM ---------------------------------------------
         try:
             async for chunk in self.llm.astream(messages):
-                # extract the delta containing the assistant’s new tokens
                 choice = chunk.choices[0]
                 delta = choice.delta
-                if hasattr(delta, "content") and delta.content:
+                if getattr(delta, "content", None):
                     yield delta.content
         except Exception as e:
-            …
             yield f"エラーが発生しました: {str(e)}"
 
     def get_conversation_history(self, conversation_id: Optional[str] = None) -> list:
