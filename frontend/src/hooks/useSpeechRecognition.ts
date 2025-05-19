@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 interface SpeechRecognitionEvent extends Event {
     results: SpeechRecognitionResultList;
@@ -48,102 +48,80 @@ interface SpeechRecognition extends EventTarget {
     abort(): void;
 }
 
-interface UseSpeechRecognitionProps {
-    onTranscript: (transcript: string, isFinal: boolean) => void;
-    onError?: (error: string) => void;
-    language?: string;
-}
-
-interface SpeechRecognitionState {
-    isListening: boolean;
+interface SpeechRecognitionHook {
     isSupported: boolean;
+    isListening: boolean;
+    transcript: string;
     error: string | null;
+    startListening: () => void;
+    stopListening: () => void;
 }
 
-export const useSpeechRecognition = ({
-    onTranscript,
-    onError,
-    language = 'ja-JP'
-}: UseSpeechRecognitionProps): SpeechRecognitionState => {
-    const [isListening, setIsListening] = useState(false);
+export const useSpeechRecognition = (): SpeechRecognitionHook => {
     const [isSupported, setIsSupported] = useState(false);
+    const [isListening, setIsListening] = useState(false);
+    const [transcript, setTranscript] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
 
     useEffect(() => {
-        // Web Speech APIのサポート確認
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        setIsSupported(!!SpeechRecognition);
-    }, []);
+        const isSpeechSupported = 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
+        setIsSupported(isSpeechSupported);
 
-    const startListening = useCallback(() => {
-        if (!isSupported) {
-            setError('このブラウザは音声認識をサポートしていません。');
-            return;
+        if (isSpeechSupported) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'ja-JP';
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            recognition.onresult = (event) => {
+                const transcript = Array.from(event.results)
+                    .map(result => result[0].transcript)
+                    .join('');
+                setTranscript(transcript);
+            };
+
+            recognition.onerror = (event) => {
+                setError(event.error);
+            };
+
+            recognition.onend = () => {
+                setIsListening(false);
+            };
+
+            setRecognition(recognition);
         }
 
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-
-        recognition.lang = language;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-
-        recognition.onstart = () => {
-            setIsListening(true);
-            setError(null);
-        };
-
-        recognition.onend = () => {
-            setIsListening(false);
-        };
-
-        recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-            const errorMessage = event.error === 'not-allowed'
-                ? 'マイクの使用が許可されていません。'
-                : `音声認識エラー: ${event.error}`;
-            setError(errorMessage);
-            setIsListening(false);
-            onError?.(errorMessage);
-        };
-
-        recognition.onresult = (event: SpeechRecognitionEvent) => {
-            const transcript = Array.from(event.results)
-                .map(result => result[0].transcript)
-                .join('');
-
-            const isFinal = event.results[0].isFinal;
-            onTranscript(transcript, isFinal);
-        };
-
-        try {
-            recognition.start();
-        } catch (err) {
-            setError('音声認識の開始に失敗しました。');
-            onError?.('音声認識の開始に失敗しました。');
-        }
-    }, [isSupported, language, onTranscript, onError]);
-
-    const stopListening = useCallback(() => {
-        if (!isSupported) return;
-
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        recognition.stop();
-    }, [isSupported]);
-
-    // コンポーネントのアンマウント時に音声認識を停止
-    useEffect(() => {
         return () => {
-            if (isListening) {
-                stopListening();
+            if (recognition) {
+                recognition.stop();
             }
         };
-    }, [isListening, stopListening]);
+    }, []);
+
+    const startListening = () => {
+        if (recognition && !isListening) {
+            recognition.start();
+            setIsListening(true);
+            setError(null);
+        }
+    };
+
+    const stopListening = () => {
+        if (recognition && isListening) {
+            recognition.stop();
+            setIsListening(false);
+        }
+    };
 
     return {
-        isListening,
         isSupported,
-        error
+        isListening,
+        transcript,
+        error,
+        startListening,
+        stopListening
     };
 };
 

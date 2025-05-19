@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Message } from '../types/chat';
 import { MessageList } from './MessageList';
 import ChatInput from './ChatInput';
@@ -33,11 +33,39 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         setError(error);
     };
 
-    const { isSupported } = useSpeechRecognition({
-        onTranscript: handleTranscript,
-        onError: handleError,
-        language: 'ja-JP',
-    });
+    const { isSupported } = useSpeechRecognition();
+
+    useEffect(() => {
+        if (isSupported) {
+            // 音声認識の設定
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = 'ja-JP';
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            recognition.onresult = (event) => {
+                const transcript = Array.from(event.results)
+                    .map(result => result[0].transcript)
+                    .join('');
+                const isFinal = event.results[event.results.length - 1].isFinal;
+                handleTranscript(transcript, isFinal);
+            };
+
+            recognition.onerror = (event) => {
+                handleError(event.error);
+            };
+
+            if (isVoiceInputActive) {
+                recognition.start();
+            } else {
+                recognition.stop();
+            }
+
+            return () => {
+                recognition.stop();
+            };
+        }
+    }, [isVoiceInputActive, isSupported, handleTranscript, handleError]);
 
     const { volume, error: audioError } = useAudioLevel({
         isActive: isVoiceInputActive,

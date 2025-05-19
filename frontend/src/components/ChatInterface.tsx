@@ -1,255 +1,177 @@
-import { useState, useCallback } from 'react';
-import { ClientMessageType } from '../types/websocket';
+import React, { useState, useEffect, useRef } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { useAudioPlayback } from '../hooks/useAudioPlayback';
+import { useLipSync } from '../hooks/useLipSync';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
+import { Message } from '../types/chat';
 
-interface Message {
-    text: string;
-    isUser: boolean;
-    timestamp: Date;
+interface ChatInterfaceProps {
+  clientId: string;
+  onLipSyncUpdate?: (lipShape: { a: number; i: number; u: number; e: number; o: number }) => void;
 }
 
-export const ChatInterface: React.FC = () => {
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [inputText, setInputText] = useState('');
-    const [isRecording, setIsRecording] = useState(false);
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ clientId, onLipSyncUpdate }) => {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { sendMessage, lastMessage } = useWebSocket(`ws://localhost:8000/ws/${clientId}`);
+  const { playAudio, playAudioStream, stopAudio, isPlaying, currentTime } = useAudioPlayback();
+  const { generateLipSyncData, getCurrentLipShape } = useLipSync();
+  const { isListening, transcript, startListening, stopListening, error: speechError } = useSpeechRecognition();
 
-    const handleWebSocketMessage = useCallback((message: any) => {
-        if (message.type === 'llm_response_chunk') {
-            setMessages(prev => {
-                const lastMessage = prev[prev.length - 1];
-                if (lastMessage && !lastMessage.isUser) {
-                    return [
-                        ...prev.slice(0, -1),
-                        {
-                            ...lastMessage,
-                            text: lastMessage.text + message.payload.text_chunk
-                        }
-                    ];
-                } else {
-                    return [
-                        ...prev,
-                        {
-                            text: message.payload.text_chunk,
-                            isUser: false,
-                            timestamp: new Date()
-                        }
-                    ];
-                }
-            });
+  // メッセージの自動スクロール
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // 音声認識の結果を入力テキストに反映
+  useEffect(() => {
+    if (transcript) {
+      setInputText(transcript);
+    }
+  }, [transcript]);
+
+  // リップシンクの更新
+  useEffect(() => {
+    if (isPlaying && onLipSyncUpdate) {
+      const lipShape = getCurrentLipShape(currentTime);
+      onLipSyncUpdate(lipShape);
+    }
+  }, [isPlaying, currentTime, getCurrentLipShape, onLipSyncUpdate]);
+
+  // WebSocketメッセージの処理
+  useEffect(() => {
+    if (lastMessage) {
+      const message = JSON.parse(lastMessage);
+      
+      switch (message.type) {
+        case 'llm_response_chunk':
+          setMessages(prev => [...prev, {
+            type: 'assistant',
+            content: message.payload.text_chunk,
+            timestamp: new Date().toISOString()
+          }]);
+          break;
+        
+        case 'llm_response_complete':
+          // 応答完了時の処理（必要に応じて）
+          break;
+        
+        case 'audio_chunk':
+          // リアルタイム音声チャンクの処理
+          const audioData = new Float32Array(
+            new Uint8Array(
+              atob(message.payload.audio)
+                .split('')
+                .map(c => c.charCodeAt(0))
+            ).buffer
+          );
+          playAudioStream(audioData);
+          break;
+        
+        case 'error_message':
+          console.error('Error:', message.payload.message);
+          break;
+      }
+    }
+  }, [lastMessage, playAudioStream]);
+
+  // テキスト送信処理
+  const handleSendMessage = () => {
+    if (inputText.trim()) {
+      const message: Message = {
+        type: 'user',
+        content: inputText,
+        timestamp: new Date().toISOString()
+      };
+      
+      setMessages(prev => [...prev, message]);
+      sendMessage({
+        type: 'user_message',
+        payload: {
+          text: inputText,
+          session_id: clientId
         }
-    }, []);
+      });
+      
+      setInputText('');
+      if (isListening) {
+        stopListening();
+      }
+    }
+  };
 
-    const { sendMessage, isConnected } = useWebSocket(handleWebSocketMessage);
+  // 音声入力処理
+  const handleVoiceInput = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
 
-    const handleSendMessage = useCallback(() => {
-        if (!inputText.trim()) return;
-
-        const message: Message = {
-            text: inputText,
-            isUser: true,
-            timestamp: new Date()
-        };
-
-        setMessages(prev => [...prev, message]);
-        sendMessage({
-            type: ClientMessageType.USER_MESSAGE,
-            payload: { text: inputText }
-        });
-        setInputText('');
-    }, [inputText, sendMessage]);
-
-    const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSendMessage();
-        }
-    }, [handleSendMessage]);
-
-    const toggleRecording = useCallback(() => {
-        if (!isRecording) {
-            // 音声認識の開始
-            if ('webkitSpeechRecognition' in window) {
-                const recognition = new (window as any).webkitSpeechRecognition();
-                recognition.lang = 'ja-JP';
-                recognition.continuous = true;
-                recognition.interimResults = true;
-
-                recognition.onresult = (event: any) => {
-                    const transcript = event.results[event.results.length - 1][0].transcript;
-                    if (event.results[event.results.length - 1].isFinal) {
-                        sendMessage({
-                            type: ClientMessageType.VOICE_TRANSCRIPT,
-                            payload: {
-                                transcript,
-                                is_final: true
-                            }
-                        });
-                    }
-                };
-
-                recognition.start();
-                setIsRecording(true);
-            }
-        } else {
-            // 音声認識の停止
-            setIsRecording(false);
-        }
-    }, [isRecording, sendMessage]);
-
-    return (
-        <div className="chat-interface">
-            <div className="connection-status">
-                {isConnected ? (
-                    <span className="connected">接続中</span>
-                ) : (
-                    <span className="disconnected">接続待機中...</span>
-                )}
-            </div>
-            <div className="messages">
-                {messages.map((message, index) => (
-                    <div
-                        key={index}
-                        className={`message ${message.isUser ? 'user' : 'bot'}`}
-                    >
-                        <div className="message-content">{message.text}</div>
-                        <div className="message-timestamp">
-                            {message.timestamp.toLocaleTimeString()}
-                        </div>
-                    </div>
-                ))}
-            </div>
-            <div className="input-area">
-                <textarea
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder="メッセージを入力..."
-                    disabled={!isConnected}
-                />
-                <button
-                    onClick={handleSendMessage}
-                    disabled={!isConnected || !inputText.trim()}
-                >
-                    送信
-                </button>
-                <button
-                    onClick={toggleRecording}
-                    className={isRecording ? 'recording' : ''}
-                    disabled={!isConnected}
-                >
-                    {isRecording ? '停止' : '音声入力'}
-                </button>
-            </div>
-            <style jsx>{`
-                .chat-interface {
-                    display: flex;
-                    flex-direction: column;
-                    height: 100%;
-                    padding: 1rem;
-                }
-
-                .connection-status {
-                    text-align: center;
-                    margin-bottom: 1rem;
-                    font-size: 0.9rem;
-                }
-
-                .connected {
-                    color: #28a745;
-                }
-
-                .disconnected {
-                    color: #dc3545;
-                }
-
-                .messages {
-                    flex: 1;
-                    overflow-y: auto;
-                    margin-bottom: 1rem;
-                    padding: 0.5rem;
-                }
-
-                .message {
-                    margin-bottom: 1rem;
-                    padding: 0.75rem;
-                    border-radius: 0.5rem;
-                    max-width: 80%;
-                    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-                }
-
-                .message.user {
-                    background-color: #e3f2fd;
-                    margin-left: auto;
-                }
-
-                .message.bot {
-                    background-color: #f5f5f5;
-                    margin-right: auto;
-                }
-
-                .message-content {
-                    margin-bottom: 0.25rem;
-                    word-wrap: break-word;
-                }
-
-                .message-timestamp {
-                    font-size: 0.75rem;
-                    color: #666;
-                    text-align: right;
-                }
-
-                .input-area {
-                    display: flex;
-                    gap: 0.5rem;
-                    padding: 0.5rem;
-                    background-color: #f8f9fa;
-                    border-radius: 0.5rem;
-                }
-
-                textarea {
-                    flex: 1;
-                    padding: 0.75rem;
-                    border: 1px solid #dee2e6;
-                    border-radius: 0.25rem;
-                    resize: none;
-                    height: 2.5rem;
-                    font-size: 0.9rem;
-                }
-
-                textarea:focus {
-                    outline: none;
-                    border-color: #80bdff;
-                    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
-                }
-
-                button {
-                    padding: 0.5rem 1rem;
-                    border: none;
-                    border-radius: 0.25rem;
-                    background-color: #007bff;
-                    color: white;
-                    cursor: pointer;
-                    font-size: 0.9rem;
-                    transition: background-color 0.2s;
-                }
-
-                button:hover {
-                    background-color: #0056b3;
-                }
-
-                button:disabled {
-                    background-color: #ccc;
-                    cursor: not-allowed;
-                }
-
-                button.recording {
-                    background-color: #dc3545;
-                }
-
-                button.recording:hover {
-                    background-color: #c82333;
-                }
-            `}</style>
+  return (
+    <div className="flex flex-col h-full max-w-2xl mx-auto p-4">
+      {/* エラーメッセージ表示 */}
+      {speechError && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+          {speechError}
         </div>
-    );
+      )}
+
+      {/* メッセージ表示エリア */}
+      <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+        {messages.map((message, index) => (
+          <div
+            key={index}
+            className={`flex ${
+              message.type === 'user' ? 'justify-end' : 'justify-start'
+            }`}
+          >
+            <div
+              className={`max-w-[70%] rounded-lg p-3 ${
+                message.type === 'user'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-200 text-gray-800'
+              }`}
+            >
+              {message.content}
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* 入力エリア */}
+      <div className="flex space-x-2">
+        <input
+          type="text"
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+          placeholder={isListening ? "音声認識中..." : "メッセージを入力..."}
+          className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          onClick={handleVoiceInput}
+          className={`p-2 rounded-lg ${
+            isListening ? 'bg-red-500 text-white' : 'bg-gray-200'
+          }`}
+          title={isListening ? "音声入力を停止" : "音声入力を開始"}
+        >
+          🎤
+        </button>
+        <button
+          onClick={handleSendMessage}
+          className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+        >
+          送信
+        </button>
+      </div>
+    </div>
+  );
 }; 

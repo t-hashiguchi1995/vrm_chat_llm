@@ -19,7 +19,7 @@ const App: React.FC = () => {
                 />
             </div>
             <div className="chat-container">
-                <ChatInterface />
+                <ChatInterface clientId="default" />
             </div>
             <style jsx>{`
                 .app {
